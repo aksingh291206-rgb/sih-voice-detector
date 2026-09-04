@@ -1,0 +1,94 @@
+<!-- client/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SIH Voice Anti-Spoofing Stream Test</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; background: #121212; color: #fff; }
+    button { padding: 10px 20px; font-size: 16px; margin-right: 10px; cursor: pointer; }
+    #log { margin-top: 20px; font-family: monospace; background: #222; padding: 10px; height: 300px; overflow-y: scroll; border: 1px solid #444; }
+  </style>
+</head>
+<body>
+  <h2>SIH Live Audio Ingestion Test</h2>
+  <!-- Controls to start/stop live audio capture -->
+  <button id="startBtn">Start Call Stream</button>
+  <button id="stopBtn" disabled>Stop Call Stream</button>
+  
+  <h3>Live Pipeline Log:</h3>
+  <div id="log"></div>
+
+  <script>
+    // Global handles for audio context, processor node, media stream, and WebSocket
+    let audioContext;
+    let workletNode;
+    let micStream;
+    let socket;
+
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const logDiv = document.getElementById('log');
+
+    // Utility function to print timestamped logs to UI
+    function log(msg) {
+      logDiv.innerHTML += `[${new Date().toLocaleTimeString()}] ${msg}<br>`;
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    startBtn.onclick = async () => {
+      try {
+        // 1. Establish binary WebSocket connection to the FastAPI server
+        socket = new WebSocket('ws://localhost:8000/ws/audio');
+        socket.binaryType = 'arraybuffer';
+
+        // Log connection events
+        socket.onopen = () => log('Connected to WebSocket server.');
+        socket.onmessage = (event) => log(`Server Response: ${event.data}`);
+        socket.onclose = () => log('WebSocket connection closed.');
+
+        // 2. Request user microphone permissions
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+        // 3. Initialize AudioContext at native hardware sample rate
+        audioContext = new AudioContext();
+
+        // 4. Load the client AudioWorklet module script from FastAPI static endpoint
+        await audioContext.audioWorklet.addModule('/client/audio-processor.js');
+
+        // 5. Instantiate the AudioWorkletNode
+        workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+
+        // 6. Receive binary PCM ArrayBuffers from the Worklet thread and transmit over WebSocket
+        workletNode.port.onmessage = (event) => {
+          if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(event.data);
+          }
+        };
+
+        // 7. Route microphone input into the AudioWorklet
+        const source = audioContext.createMediaStreamSource(micStream);
+        source.connect(workletNode);
+
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        log('Microphone streaming active.');
+      } catch (err) {
+        log(`Error: ${err.message}`);
+      }
+    };
+
+    stopBtn.onclick = () => {
+      // Cleanup tracks and close connections
+      if (micStream) micStream.getTracks().forEach(track => track.stop());
+      if (workletNode) workletNode.disconnect();
+      if (audioContext) audioContext.close();
+      if (socket) socket.close();
+
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      log('Streaming stopped.');
+    };
+  </script>
+</body>
+</html>

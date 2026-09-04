@@ -1,0 +1,11 @@
+# Python environment & cache
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
